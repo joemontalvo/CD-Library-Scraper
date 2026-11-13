@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Music CDs · Yorba Linda Public Library</title>
+<style>
+:root{
+  --bg:#faf9f6;--card:#fff;--text:#1f1f1f;--muted:#6b6b6b;--line:#e4e1da;
+  --accent:#1d5fa6;--ok:#1e7a3c;--no:#a33;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#161616;--card:#202020;--text:#eee;--muted:#a0a0a0;--line:#333;--accent:#6aa9ec;--ok:#5fd18a;--no:#f08a8a}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif;padding:20px;max-width:1200px;margin-inline:auto}
+h1{margin:0 0 4px}
+.sub{color:var(--muted);margin:0 0 16px;font-size:14px}
+.bar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+input,select,button{padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--text);font:inherit}
+input{flex:1;min-width:200px}
+button{cursor:pointer}
+button:hover{border-color:var(--accent)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;display:flex}
+.card a{display:flex;flex-direction:column;width:100%;color:inherit;text-decoration:none}
+.card:hover{border-color:var(--accent)}
+.cover{width:100%;aspect-ratio:1;object-fit:cover;background:var(--line);display:block}
+.ph{display:flex;align-items:center;justify-content:center;font-size:40px}
+.body{padding:10px;display:flex;flex-direction:column;gap:3px;flex:1}
+.t{font-weight:600;font-size:14px;overflow-wrap:anywhere}
+.a,.m{color:var(--muted);font-size:13px;overflow-wrap:anywhere}
+.s{font-size:12px;font-weight:600;margin-top:auto;padding-top:6px}
+.ok{color:var(--ok)}.no{color:var(--no)}
+.msg{padding:30px 10px;text-align:center;color:var(--muted)}
+.more{display:block;margin:20px auto 0}
+</style>
+</head>
+<body>
+<h1>Music CDs</h1>
+<p class="sub">Yorba Linda Public Library · <span id="count">Loading…</span> · <span id="updated"></span></p>
+
+<div class="bar">
+  <input id="q" type="search" placeholder="Search artist or title…" aria-label="Search">
+  <select id="avail" aria-label="Availability">
+    <option value="all">All CDs</option>
+    <option value="in">Available now</option>
+  </select>
+  <select id="sort" aria-label="Sort">
+    <option value="new">Newest first</option>
+    <option value="title">Title A–Z</option>
+    <option value="artist">Artist A–Z</option>
+  </select>
+</div>
+
+<div class="grid" id="grid"></div>
+<div class="msg" id="msg"></div>
+<button class="more" id="more" hidden>Show more</button>
+
+<script>
+const DATA_URL = "data/music_cds.json";
+const PAGE_SIZE = 120;
+
+let DATA = [];
+let shown = PAGE_SIZE;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => (
+  {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+// Only allow http(s) links and images from the data file.
+const safeUrl = u => /^https?:\/\//i.test(u || "") ? u : "";
+
+function filtered() {
+  const q = $("q").value.toLowerCase().trim();
+  let rows = DATA.filter(d =>
+    !q || `${d.title} ${d.subtitle} ${d.artist}`.toLowerCase().includes(q));
+  if ($("avail").value === "in") rows = rows.filter(d => Number(d.available) > 0);
+  const s = $("sort").value;
+  // "new" keeps the file's order, which is newest first.
+  if (s === "title") rows = [...rows].sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+  if (s === "artist") rows = [...rows].sort((a, b) => (a.artist || "").localeCompare(b.artist || ""));
+  return rows;
+}
+
+function card(d) {
+  const ok = Number(d.available) > 0;
+  const cover = safeUrl(d.cover);
+  const img = cover
+    ? `<img class="cover" loading="lazy" src="${esc(cover)}" alt="" onerror="this.outerHTML='<div class=\\'cover ph\\'>💿</div>'">`
+    : `<div class="cover ph">💿</div>`;
+  const meta = [d.year, d.callNumber].filter(Boolean).map(esc).join(" · ");
+  const copies = d.total ? ` (${esc(d.available)}/${esc(d.total)})` : "";
+  return `<div class="card"><a href="${esc(safeUrl(d.url))}" target="_blank" rel="noopener">${img}
+    <div class="body">
+      <div class="t">${esc(d.title)}</div>
+      <div class="a">${esc(d.artist)}</div>
+      <div class="m">${meta}</div>
+      <div class="s ${ok ? "ok" : "no"}">${esc(d.status)}${copies}</div>
+    </div></a></div>`;
+}
+
+function render() {
+  const rows = filtered();
+  $("count").textContent = `${rows.length.toLocaleString()} of ${DATA.length.toLocaleString()} shown`;
+  $("grid").innerHTML = rows.slice(0, shown).map(card).join("");
+  $("msg").textContent = rows.length ? "" : "No CDs match your search.";
+  $("more").hidden = rows.length <= shown;
+}
+
+function resetAndRender() { shown = PAGE_SIZE; render(); }
+
+async function load() {
+  try {
+    const res = await fetch(DATA_URL, { cache: "no-cache" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    DATA = json.items || [];
+    if (json.updated) {
+      $("updated").textContent = "updated " + new Date(json.updated).toLocaleDateString(undefined,
+        { year: "numeric", month: "long", day: "numeric" });
+    }
+    render();
+  } catch (err) {
+    $("count").textContent = "";
+    $("msg").textContent = location.protocol === "file:"
+      ? "Browsers block loading data when a page is opened as a file. Serve the folder instead, for example: python3 -m http.server"
+      : `Couldn’t load ${DATA_URL} (${err.message}).`;
+  }
+}
+
+["q", "avail", "sort"].forEach(id => $(id).addEventListener("input", resetAndRender));
+$("more").addEventListener("click", () => { shown += PAGE_SIZE; render(); });
+load();
+</script>
+</body>
+</html>
